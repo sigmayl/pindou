@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -25,12 +24,11 @@ def image_bytes(image: Image.Image, fmt: str = "PNG") -> bytes:
 
 
 @pytest.fixture()
-def settings(tmp_path: Path) -> Settings:
+def settings() -> Settings:
     return Settings(
-        weights_dir=Path(__file__).resolve().parents[1] / "weights",
         rmbg_enabled=False,
         rate_limit_per_minute=0,
-        pixel_threads=2,
+        torch_threads=2,
         environment="test",
     )
 

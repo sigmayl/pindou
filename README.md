@@ -2,9 +2,9 @@
 
 把照片转换成像素画与可打印的拼豆图纸。前后端分离，无账号体系：
 
-- **后端**只做模型推理（CPU）：Pixelization 像素化 + 可选的 RMBG-2.0 自动抠图。
-- **前端**负责所有像素图像后处理：蒙版对齐、拼豆色表匹配、限色/平滑/清理、图纸排版与 PNG 导出。
-- 上传的图片只在一次请求的内存中处理，不落盘、不建库、不需要登录。
+- **前端**完成像素化与拼豆标准化：Pixilate 引擎（网格检测、重采样、调色板、清理）+ 拼豆色表归色 + 图纸排版 + three.js 熨烫预览。
+- **后端**只做可选的 RMBG-2.0 自动抠图（CPU）。
+- 只有使用自动抠图时图片才会上传，且只在一次请求的内存中处理，不落盘、不建库、不需要登录。
 
 ![界面预览](docs/preview.png)
 
@@ -13,34 +13,34 @@
 ```
 浏览器（React + Vite）
   ├─ 解码图片 / EXIF 方向 / 蒙版对齐 / 透明通道
-  ├─ CIE Lab 色差匹配 + 贪心限色 + 区域平滑 + 孤立点清理 + 抖动
-  ├─ Canvas 拼豆图纸（网格、色号、用量图例）
-  └─ 下载 PNG
-        │  multipart 上传（仅推理所需图片）
+  ├─ Pixilate 像素化（网格检测 → 重采样 → OKLab 调色板 → 清理）
+  ├─ 拼豆色表标准化：限色先聚类，再按 OKLab 归到最近真实色号
+  ├─ Canvas 拼豆图纸（四边坐标尺、5/10 格辅助线、中心标记、色号、用量图例）
+  ├─ three.js 3D 预览（空心豆熨烫压扁：内部成方块、边缘成大圆角方块；5 种表面纹理）
+  └─ 下载 PNG（像素画 / 图纸 / 3D 效果图）
+        │  multipart 上传（仅自动抠图需要）
         ▼
 FastAPI（CPU PyTorch）
-  ├─ POST /api/v1/pixelate          → 原始像素网格 PNG + 几何元数据
   └─ POST /api/v1/remove-background → 1024×1024 灰度蒙版 PNG
 ```
 
-后端不读取拼豆色表，也不生成图纸。像素网格的几何元数据（缩放、裁剪、网格尺寸）随响应返回，前端据此把蒙版精确对齐到网格。
+像素化、色号标准化和图纸绘制都在浏览器内完成；后端不读取色表，也不生成图纸。
 
 ### 目录
 
 ```
 backend/
-  app/                 FastAPI 应用、服务层、模型定义
-  weights/             160_net_G_A.pth / alias_net.pth（不入库）
+  app/                 FastAPI 应用、RMBG 服务、中间件
   tests/               pytest
   Dockerfile
 frontend/
-  src/lib/             Lab、色表、优化、图纸、图像几何
-  src/workers/         颜色优化的 Web Worker
-  src/components/      UI
+  src/lib/pixilate/    vendored Pixilate 引擎（MIT，见其 README）
+  src/lib/             色表、几何、图纸、拼豆形状、表面纹理
+  src/workers/         像素化 Web Worker
+  src/components/      UI（含 three.js 3D 预览）
   Dockerfile + nginx.conf
 scripts/
   build-palettes.mjs   从 data/pindou-color-data 生成前端色表包
-  download-weights.sh  下载并校验模型权重
 data/pindou-color-data/ 色表原始数据（MIT）
 docker-compose.yml
 legacy/                重构前的扁平脚本与旧输出，仅作对照，可删除
@@ -53,7 +53,6 @@ legacy/                重构前的扁平脚本与旧输出，仅作对照，可
 ```bash
 cp .env.example .env
 # 编辑 .env：至少设置 CORS_ORIGINS；需要用自动抠图时填写 HF_TOKEN
-bash scripts/download-weights.sh
 docker compose up -d --build
 ```
 
@@ -67,7 +66,7 @@ docker compose pull
 docker compose up -d
 ```
 
-首次构建会安装 CPU 版 PyTorch 与 RMBG 依赖，镜像较大；模型权重通过 bind mount 挂载，不写进镜像。
+首次构建会安装 CPU 版 PyTorch 与 RMBG 依赖，镜像较大；RMBG 权重在首次抠图时下载到 Hugging Face 缓存 volume，不写进镜像。
 
 ### 多架构镜像与 CI
 
@@ -96,7 +95,6 @@ docker buildx bake -f docker-bake.hcl --set "*.platform=linux/arm64" --load
 
 ```bash
 make setup          # 创建 .venv，安装后端与前端依赖
-make weights        # 下载 160_net_G_A.pth + alias_net.pth（约 178 MB）
 make palettes       # 从 data/ 生成前端色表（仓库已包含生成结果）
 ```
 
@@ -130,35 +128,6 @@ RMBG-2.0 是 gated 模型：
 { "error": { "code": "invalid_image", "message": "..." } }
 ```
 
-### `POST /api/v1/pixelate`
-
-`multipart/form-data`：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `image` | file | PNG/JPEG/WebP/BMP/GIF/TIFF，≤ 20 MB，≤ 3000 万像素 |
-| `pixel_size` | int | 4–64；越大格子越粗。前端等级为 4/6/8/12/16/24/32/48/64 |
-
-响应：
-
-```json
-{
-  "image": "data:image/png;base64,...",
-  "elapsed_ms": 219.4,
-  "meta": {
-    "pixel_size": 8,
-    "source_width": 225, "source_height": 428,
-    "thumb_width": 225, "thumb_height": 428,
-    "resized_width": 112, "resized_height": 214,
-    "crop_left": 0, "crop_top": -1,
-    "crop_width": 112, "crop_height": 216,
-    "grid_width": 28, "grid_height": 54
-  }
-}
-```
-
-`meta` 是前端对齐蒙版的唯一依据。`crop_*` 可能为负：上游流程按 4 的倍数向上取整，PIL 会补边，前端需按同样方式补透明边。
-
 ### `POST /api/v1/remove-background`
 
 `multipart/form-data` 的 `image`。返回 1024×1024 灰度蒙版：
@@ -172,7 +141,7 @@ RMBG-2.0 是 gated 模型：
 ### 其他
 
 - `GET /healthz`：存活探针。
-- `GET /readyz`：像素模型是否已加载；未就绪返回 503。
+- `GET /readyz`：RMBG 已启用且预加载失败时返回 503；未预加载时只要服务可连接即为就绪。
 - `GET /api/v1/info`：版本、限制、RMBG 是否启用/已加载。
 - `GET /docs`：OpenAPI 文档（生产环境建议只在内网开放）。
 
@@ -182,8 +151,7 @@ RMBG-2.0 是 gated 模型：
 | --- | --- | --- |
 | `APP_ENV` | `production` | 环境标识 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
-| `MODEL_WEIGHTS_DIR` | `backend/weights` | 权重目录 |
-| `PIXEL_THREADS` | `min(8, CPU)` | PyTorch CPU 线程数 |
+| `TORCH_THREADS` | `min(8, CPU)` | PyTorch CPU 线程数（兼容旧的 `PIXEL_THREADS`） |
 | `INFERENCE_CONCURRENCY` | `1` | 同时进行的推理数；CPU 上建议 1 |
 | `INFERENCE_WAIT_TIMEOUT` | `120` | 排队等待秒数，超时 503 |
 | `MAX_UPLOAD_BYTES` | `20971520` | 上传体积上限 |
@@ -207,16 +175,14 @@ RMBG-2.0 是 gated 模型：
 
 ## 前端算法说明
 
-- **颜色匹配**：sRGB → CIE L\*a\*b\*（D65），ΔE76 平方距离最近色。
-- **限色**：按可见像素颜色及出现次数，贪心选择能最大程度降低总误差的色卡颜色，数量不超过“最大颜色数”。
-- **区域平滑**：最多 4 轮，颜色误差与四邻域一致性加权；边缘保护按原始 Lab 色差降低跨边缘权重。
-- **孤立区域清理**：四连通区域 ≤ 阈值时尝试并入邻居；强边缘可阻止合并。
-- **抖动**：4×4 有序抖动，只在已选颜色间选择；边缘保护下跳过强梯度。
+- **像素化**：使用 vendored 的 [Pixilate](https://github.com/Shilo/pixilate) 引擎。它先检测像素网格（含平滑放大的回退），再按网格重采样、在 OKLab 空间生成调色板（Wu 箱分割 + Lloyd + Ward 合并）、清理孤立像素，最后拉伸到目标格数；输出 alpha 为二值，透明格直接留空。
+- **拼豆标准化**：拼豆色表作为 Pixilate 的 `palette` 传入，调色板阶段按 OKLab 色差把每个格子归到最近的真实色号，输出的 RGB 就是色表里的精确字节。
+- **限色**：`colors` 先按指定簇数聚类，再把每个簇映射到最近色号，因此限色与标准化一步完成，不会出现“先归色再限色”导致的色号漂移。
 - **图纸**：每个可见格一颗豆；格内显示色号（空间足够时），下方图例按色号统计数量。
+- **3D 熨烫**：每颗豆由空心圆柱网格生成，熨烫程度从“未熨烫”连续过渡到“压平”。内部豆被压成填满格子的方块，与邻居无缝相接；朝向空位的边和角保留大圆角与柔和肩部，因此边缘与内部使用不同的轮廓。
+- **表面纹理**：5 种熨烫表面——正常（细纹理）、细闪（细纹理 + 小闪片）、粗闪（细纹理 + 更大更强的闪片）、澡巾（中纹理）、毛巾（大纹理）。纹理为可平铺的法线贴图，闪片由片元着色器按世界坐标程序化生成，整幅作品共享同一片压印表面。
 
-这些算法在 `frontend/src/lib/optimize.ts`，与原始 Python 实现以固定样例做了回归对比（允许 1–2 个像素的 float32 近似误差）。颜色优化在 Web Worker 中执行，避免阻塞界面。
-
-前端会把工作图最长边限制为 2048 像素（模型内部仍缩到 1024），以降低手机内存占用；网格等级基于工作图尺寸计算，与直接上传原图的结果基本一致。
+像素化在 Web Worker 中执行，避免阻塞界面；工作图最长边限制为 2048 像素，以降低手机内存占用。
 
 ## 测试
 
@@ -224,8 +190,8 @@ RMBG-2.0 是 gated 模型：
 make test
 ```
 
-- 后端：上传校验、几何对齐、权重加载、API 行为、RMBG 未启用时的 503。
-- 前端：Lab/半偶舍入、等级几何、色表匹配、清理/透明像素、与 Python 固定样例的像素回归。
+- 后端：上传校验、RMBG 未启用时的 503、配置兼容、API 行为。
+- 前端：Pixilate 网格/透明/限色/确定性、色表标准化、等级几何、图纸统计、拼豆形状与内外轮廓、表面纹理平铺与顺序。
 
 端到端手工检查：
 
@@ -242,27 +208,28 @@ make dev-frontend
 3. **CORS**：同源部署不需要；跨域时设置精确的 `CORS_ORIGINS`，不要使用 `*` 配合凭证。
 4. **限流**：后端自带按 IP 令牌桶；外层可再加 Nginx `limit_req` / 云 WAF。
 5. **上传限制**：按业务调整 `MAX_UPLOAD_BYTES` / `MAX_IMAGE_PIXELS`，并同步外层 `client_max_body_size`。
-6. **资源**：单进程加载两个模型约占 0.5–1 GB 内存；CPU 推理并发保持 1，按 CPU 核数设置 `PIXEL_THREADS`。
-7. **健康检查**：`/healthz` 用于存活，`/readyz` 用于就绪（模型加载完成才接流量）。
+6. **资源**：后端只加载 RMBG（约 0.5–1 GB 内存）；CPU 推理并发保持 1，按 CPU 核数设置 `TORCH_THREADS`。像素化在前端完成，服务器不需要额外算力。
+7. **健康检查**：`/healthz` 用于存活，`/readyz` 在 RMBG 预加载失败时返回 503。
 8. **日志**：stdout 结构化前缀 + `X-Request-ID`；不要记录图片内容。容器日志交给平台收集。
 9. **数据**：应用不写上传文件、不建数据库；如启用 RMBG，HF 缓存 volume 需要持久化。
-10. **模型许可**：见 `THIRD_PARTY_NOTICES.md`。Pixelization 权重上游许可证为 unknown；RMBG-2.0 标注非商业使用。上线前请自行确认商业授权。
+10. **模型许可**：见 `THIRD_PARTY_NOTICES.md`。Pixilate 为 MIT；RMBG-2.0 标注非商业使用。上线前请自行确认商业授权。
 
 ## 故障排查
 
 | 现象 | 处理 |
 | --- | --- |
-| `/readyz` 503，日志 `模型权重缺失` | 运行 `bash scripts/download-weights.sh`，确认 `MODEL_WEIGHTS_DIR` |
+| `/readyz` 503，日志 `RMBG model failed to load` | 检查 `HF_TOKEN`、模型条款、网络与 `RMBG_LOCAL_FILES_ONLY`；或先设 `RMBG_PRELOAD=false` 延迟加载 |
 | 抠图返回 503 `model_unavailable` | 检查 `RMBG_ENABLED`、`HF_TOKEN`、是否已接受模型条款；或安装 `requirements-rmbg.txt` |
-| 前端显示“服务未连接” | 后端未启动、端口不对，或 `VITE_API_BASE_URL` 配错 |
-| 生成时 422 `invalid_image` | 图片损坏/格式不支持/超过像素或体积限制 |
-| 生成时 503 `service_busy` | 推理排队超时；降低并发、提高 `INFERENCE_WAIT_TIMEOUT` 或扩容 |
+| 前端显示“服务未连接” | 后端未启动、端口不对，或 `VITE_API_BASE_URL` 配错（不影响本地像素化） |
+| 抠图时 422 `invalid_image` | 图片损坏/格式不支持/超过像素或体积限制 |
+| 抠图时 503 `service_busy` | 推理排队超时；降低并发、提高 `INFERENCE_WAIT_TIMEOUT` 或扩容 |
 | 图纸中文显示为方框 | 服务器端不渲染图纸；问题在用户浏览器字体，安装/启用中文字体即可 |
 | 图纸下载无反应 | 浏览器拦截 blob 下载；允许本站下载后重试 |
 
 ## 第三方与许可
 
-- Pixelization 权重与推理代码：<https://huggingface.co/ashleykleynhans/pixelization>（license: unknown）。
+- Pixilate 像素化引擎：<https://github.com/Shilo/pixilate>，MIT，固定提交 `4a24bba1a67e03493921618f7ff5c8d2c0b77565`。vendored 源码与本地修改见 `frontend/src/lib/pixilate/`。
+- three.js（3D 预览）：<https://github.com/mrdoob/three.js>，MIT。
 - RMBG-2.0：<https://huggingface.co/briaai/RMBG-2.0>（非商业使用许可，需接受条款）。
 - 拼豆色表：<https://github.com/HansBug/pindou-color-data>，MIT，固定提交 `178dafbc9e77d3de556550dbd058270200129186`。许可证见 `frontend/public/licenses/`。
 

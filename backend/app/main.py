@@ -25,7 +25,6 @@ from .middleware import (
     UploadSizeMiddleware,
 )
 from .services.gate import InferenceGate
-from .services.pixelization import PixelizationService
 from .services.rmbg import RmbgService
 
 LOGGER = logging.getLogger(__name__)
@@ -34,15 +33,11 @@ LOGGER = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     setup_logging(settings.log_level)
-    torch.set_num_threads(settings.pixel_threads)
+    torch.set_num_threads(settings.torch_threads)
     # Already configured when a test creates several apps.
     with suppress(RuntimeError):
         torch.set_num_interop_threads(1)
 
-    pixel_service = PixelizationService(
-        weights_dir=settings.weights_dir,
-        max_pixel_size=settings.max_pixel_size,
-    )
     rmbg_service = RmbgService(
         enabled=settings.rmbg_enabled,
         model_id=settings.rmbg_model_id,
@@ -54,23 +49,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         LOGGER.info(
-            "Starting %s %s env=%s threads=%d weights=%s",
+            "Starting %s %s env=%s threads=%d rmbg_enabled=%s rmbg_preload=%s",
             settings.app_name,
             __version__,
             settings.environment,
-            settings.pixel_threads,
-            settings.weights_dir,
+            settings.torch_threads,
+            settings.rmbg_enabled,
+            settings.rmbg_preload,
         )
-        try:
-            await asyncio.to_thread(pixel_service.load)
-            LOGGER.info("Pixelization model ready")
-        except Exception as exc:  # noqa: BLE001 - readiness reports the failure
-            LOGGER.exception("Pixelization model failed to load: %s", exc)
         if settings.rmbg_enabled and settings.rmbg_preload:
             try:
                 await asyncio.to_thread(rmbg_service.load)
                 LOGGER.info("RMBG model ready")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - readiness reports the failure
                 LOGGER.exception("RMBG model failed to load: %s", exc)
         yield
         LOGGER.info("Shutting down")
@@ -79,8 +70,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="Pindou Convert Inference API",
         version=__version__,
         description=(
-            "CPU inference for pixel-art generation and background matting. "
-            "Color quantization, bead optimization and pattern rendering live in the web client."
+            "Optional CPU background matting (RMBG-2.0). Pixelation, color quantization "
+            "and pattern rendering all run in the web client."
         ),
         docs_url="/docs",
         redoc_url=None,
@@ -89,7 +80,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.version = __version__
-    app.state.pixel_service = pixel_service
     app.state.rmbg_service = rmbg_service
     app.state.gate = InferenceGate(
         concurrency=settings.inference_concurrency,

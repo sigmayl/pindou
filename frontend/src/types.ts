@@ -1,3 +1,9 @@
+export interface BeadGrid {
+  width: number;
+  height: number;
+  rgba: Uint8ClampedArray;
+}
+
 export interface GeneratedResult {
   gridWidth: number;
   gridHeight: number;
@@ -10,8 +16,9 @@ export interface GeneratedResult {
   elapsedMs: number;
   pixelBlob: Blob;
   patternBlob: Blob | null;
+  beadGrid: BeadGrid;
 }
 
-export type ResultTab = "pixel" | "pattern";
+export type ResultTab = "pixel" | "pattern" | "bead3d";
 
-export type Phase = "idle" | "loading" | "rmbg" | "pixelate" | "optimizing";
+export type Phase = "idle" | "loading" | "rmbg" | "pixelate";

@@ -7,5 +7,4 @@ __pycache__/
 htmlcov/
 .coverage
 tests/
-weights/*.pth
-!weights/.gitkeep
+weights/

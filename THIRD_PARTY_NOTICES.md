@@ -2,12 +2,12 @@
 
 本项目包含或依赖以下第三方作品。**上线前请自行核实并取得所需授权**，尤其是商业用途。
 
-## Pixelization（像素化模型）
+## Pixilate（像素化引擎）
 
-- 来源：<https://huggingface.co/ashleykleynhans/pixelization>
-- 内容：`160_net_G_A.pth`、`alias_net.pth`（以及本项目不再加载的 `pixelart_vgg19.pth`）、原始推理代码。
-- 上游标注许可证：**unknown**。
-- 说明：模型仓库未声明明确许可证，使用和分发前请自行确认原模型及推理代码的许可。本项目对上游推理代码中 `pixelize_modified` 所需子网络做了等价精简加载，不改变权重。
+- 来源：<https://github.com/Shilo/pixilate>
+- 固定提交：`4a24bba1a67e03493921618f7ff5c8d2c0b77565`（`prototype/src/lib/core/`）
+- 许可证：MIT。许可证全文见 `frontend/src/lib/pixilate/LICENSE` 与 `frontend/public/licenses/pixilate-LICENSE.txt`。
+- 说明：仅 vendored 无运行时依赖的纯转换核心，本地修改在源码中以 `pindou:` 注释标出（限色与拼豆色表标准化、色表条目上限、类型清理），详见 `frontend/src/lib/pixilate/README.md`。
 
 ## RMBG-2.0（自动抠图模型）
 
@@ -22,9 +22,14 @@
 - 许可证：MIT。许可证全文见 `data/pindou-color-data/LICENSE` 与 `frontend/public/licenses/pindou-color-data-LICENSE.txt`。
 - 说明：色表数据由上游整理；实际豆子颜色可能与屏幕和色表存在差异。
 
+## three.js（3D 预览）
+
+- 来源：<https://github.com/mrdoob/three.js>
+- 许可证：MIT。仅在前端按需懒加载，用于拼豆熨烫效果预览。
+
 ## Python / JavaScript 依赖
 
-后端依赖 FastAPI、Uvicorn、PyTorch、torchvision、Pillow、NumPy、Transformers、timm、kornia 等，前端依赖 React、Vite 等。各自许可证以对应发行包为准。CPU 版 PyTorch 从 PyTorch 官方 CPU wheel 索引安装。
+后端依赖 FastAPI、Uvicorn、PyTorch、torchvision、Pillow、NumPy、Transformers、timm、kornia 等，前端依赖 React、Vite、three.js 等。各自许可证以对应发行包为准。CPU 版 PyTorch 从 PyTorch 官方 CPU wheel 索引安装。
 
 ## 示例图片
 

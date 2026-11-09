@@ -1,30 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { computeLevels, dimensionsFor, pillowThumbSize } from "./geometry";
+import { computeLevels, gridSizeFor } from "./geometry";
 
 describe("geometry", () => {
-  it("matches the backend geometry", () => {
-    expect(dimensionsFor(1024, 768, 4)).toMatchObject({
-      gridWidth: 256,
-      gridHeight: 192,
-    });
-    expect(dimensionsFor(1024, 768, 6)).toMatchObject({
-      resizedWidth: 682,
-      resizedHeight: 512,
-      gridWidth: 170,
-      gridHeight: 128,
-    });
+  it("divides the image by the block size", () => {
+    expect(gridSizeFor(1024, 768, 4)).toEqual({ gridWidth: 256, gridHeight: 192 });
+    expect(gridSizeFor(800, 600, 8)).toEqual({ gridWidth: 100, gridHeight: 75 });
   });
 
-  it("uses half-even rounding", () => {
-    expect(dimensionsFor(100, 100, 8)).toMatchObject({
-      gridWidth: 12,
-      gridHeight: 12,
-    });
-  });
-
-  it("scales thumbnails like PIL", () => {
-    expect(pillowThumbSize(2048, 1024)).toEqual({ width: 1024, height: 512 });
-    expect(pillowThumbSize(800, 600)).toEqual({ width: 800, height: 600 });
+  it("measures levels against a capped long side", () => {
+    expect(gridSizeFor(2048, 1024, 8)).toEqual({ gridWidth: 128, gridHeight: 64 });
   });
 
   it("marks tiny levels unavailable", () => {

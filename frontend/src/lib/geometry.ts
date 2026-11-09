@@ -1,24 +1,8 @@
-import { roundHalfEven } from "./color";
-
 export const BLOCK_SIZES = [4, 6, 8, 12, 16, 24, 32, 48, 64] as const;
-export const MAX_SOURCE_SIDE = 1024;
-export const MIN_MODEL_GRID = 16;
 
-export interface PixelateMeta {
-  pixel_size: number;
-  source_width: number;
-  source_height: number;
-  thumb_width: number;
-  thumb_height: number;
-  resized_width: number;
-  resized_height: number;
-  crop_left: number;
-  crop_top: number;
-  crop_width: number;
-  crop_height: number;
-  grid_width: number;
-  grid_height: number;
-}
+/** Levels are measured against the image scaled so its long side is at most this. */
+const MAX_BASE_SIDE = 1024;
+const MIN_GRID_SIDE = 4;
 
 export interface LevelOption {
   pixelSize: number;
@@ -28,57 +12,27 @@ export interface LevelOption {
   available: boolean;
 }
 
-function roundAspect(value: number, key: (candidate: number) => number): number {
-  const floor = Math.floor(value);
-  const ceil = Math.ceil(value);
-  return Math.max(key(floor) <= key(ceil) ? floor : ceil, 1);
-}
-
-/** Mirrors PIL Image.thumbnail(size, NEAREST) dimension selection. */
-export function pillowThumbSize(width: number, height: number, size = MAX_SOURCE_SIDE) {
-  if (width <= size && height <= size) return { width, height };
-  const aspect = width / height;
-  let x = Math.floor(size);
-  let y = Math.floor(size);
-  if (x / y >= aspect) {
-    x = roundAspect(y * aspect, (candidate) => Math.abs(aspect - candidate / y));
-  } else {
-    y = roundAspect(x / aspect, (candidate) =>
-      candidate === 0 ? 0 : Math.abs(aspect - x / candidate),
-    );
-  }
-  return { width: Math.max(1, x), height: Math.max(1, y) };
-}
-
-export function dimensionsFor(
+export function gridSizeFor(
   width: number,
   height: number,
   pixelSize: number,
-): { gridWidth: number; gridHeight: number; resizedWidth: number; resizedHeight: number } {
-  const thumb = pillowThumbSize(width, height);
-  const resizedWidth = Math.floor((thumb.width * 4) / pixelSize);
-  const resizedHeight = Math.floor((thumb.height * 4) / pixelSize);
+): { gridWidth: number; gridHeight: number } {
+  const scale = Math.min(1, MAX_BASE_SIDE / Math.max(width, height));
   return {
-    resizedWidth,
-    resizedHeight,
-    gridWidth: roundHalfEven(resizedWidth / 4),
-    gridHeight: roundHalfEven(resizedHeight / 4),
+    gridWidth: Math.max(1, Math.round((width * scale) / pixelSize)),
+    gridHeight: Math.max(1, Math.round((height * scale) / pixelSize)),
   };
 }
 
 export function computeLevels(width: number, height: number): LevelOption[] {
   return BLOCK_SIZES.map((pixelSize) => {
-    const dims = dimensionsFor(width, height, pixelSize);
-    const available =
-      Math.min(dims.resizedWidth, dims.resizedHeight) >= MIN_MODEL_GRID &&
-      dims.gridWidth >= 1 &&
-      dims.gridHeight >= 1;
+    const { gridWidth, gridHeight } = gridSizeFor(width, height, pixelSize);
     return {
       pixelSize,
-      gridWidth: dims.gridWidth,
-      gridHeight: dims.gridHeight,
-      beads: dims.gridWidth * dims.gridHeight,
-      available,
+      gridWidth,
+      gridHeight,
+      beads: gridWidth * gridHeight,
+      available: Math.min(gridWidth, gridHeight) >= MIN_GRID_SIDE,
     };
   });
 }

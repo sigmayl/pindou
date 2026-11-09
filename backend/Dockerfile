@@ -25,7 +25,7 @@ RUN pip install --upgrade pip \
 COPY app ./app
 
 RUN useradd --create-home --uid 10001 appuser \
-    && mkdir -p /app/weights /home/appuser/.cache/huggingface \
+    && mkdir -p /home/appuser/.cache/huggingface \
     && chown -R appuser:appuser /app /home/appuser
 USER appuser
 

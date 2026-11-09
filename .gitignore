@@ -9,7 +9,7 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Model weights (download with scripts/download-weights.sh)
+# Legacy pixelization weights (no longer loaded; safe to delete)
 legacy/weights/
 backend/weights/*.pth
 !backend/weights/.gitkeep

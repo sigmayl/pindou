@@ -1,18 +1,12 @@
-import type { OptimizeOptions } from "../lib/optimize";
+import type { PixelateOptions, PixelateResult } from "./pixelate";
 
-export interface OptimizeJobResult {
-  rgba: Uint8ClampedArray;
-  colorsUsed: number;
-}
-
-/** Run the CPU-heavy bead optimization off the main thread. */
-export function optimizeInWorker(
+/** Run the CPU-heavy pixel conversion off the main thread. */
+export function pixelateInWorker(
   rgba: Uint8ClampedArray,
   width: number,
   height: number,
-  paletteId: string,
-  options: OptimizeOptions,
-): Promise<OptimizeJobResult> {
+  options: PixelateOptions,
+): Promise<PixelateResult> {
   const copy = new Uint8ClampedArray(rgba);
   const worker = new Worker(new URL("../workers/bead.worker.ts", import.meta.url), {
     type: "module",
@@ -20,10 +14,7 @@ export function optimizeInWorker(
   return new Promise((resolve, reject) => {
     const cleanup = () => worker.terminate();
     worker.onmessage = (
-      event: MessageEvent<
-        | { rgba: ArrayBuffer; colorsUsed: number }
-        | { error: string }
-      >,
+      event: MessageEvent<{ rgba: ArrayBuffer; colorsUsed: number } | { error: string }>,
     ) => {
       cleanup();
       if ("error" in event.data) {
@@ -37,17 +28,10 @@ export function optimizeInWorker(
     };
     worker.onerror = (event) => {
       cleanup();
-      reject(new Error(event.message || "颜色优化失败。"));
+      reject(new Error(event.message || "像素化失败。"));
     };
-    worker.postMessage(
-      {
-        rgba: copy.buffer as ArrayBuffer,
-        width,
-        height,
-        paletteId,
-        options,
-      },
-      [copy.buffer as ArrayBuffer],
-    );
+    worker.postMessage({ rgba: copy.buffer as ArrayBuffer, width, height, options }, [
+      copy.buffer as ArrayBuffer,
+    ]);
   });
 }

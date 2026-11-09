@@ -23,6 +23,8 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: false,
     target: "es2022",
+    // three.js lives in its own lazily loaded chunk for the 3D preview.
+    chunkSizeWarningLimit: 650,
   },
   test: {
     environment: "node",

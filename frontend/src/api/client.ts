@@ -1,11 +1,3 @@
-import type { PixelateMeta } from "../lib/geometry";
-
-export interface PixelateResponse {
-  image: string;
-  meta: PixelateMeta;
-  elapsed_ms: number;
-}
-
 export interface MatteResponse {
   mask: string;
   width: number;
@@ -17,12 +9,10 @@ export interface ServiceInfo {
   name: string;
   version: string;
   environment: string;
-  pixel_sizes: number[];
   max_upload_bytes: number;
   max_image_pixels: number;
   rmbg_enabled: boolean;
   rmbg_loaded: boolean;
-  pixel_model_loaded: boolean;
 }
 
 export class ApiError extends Error {
@@ -72,25 +62,15 @@ async function request<T>(path: string, init: RequestInit, timeoutMs = 180_000):
   }
 }
 
-function imageForm(blob: Blob, field?: Record<string, string>): FormData {
+function imageForm(blob: Blob): FormData {
   const form = new FormData();
   const extension = blob.type === "image/png" ? "png" : "jpg";
   form.append("image", blob, `source.${extension}`);
-  if (field) {
-    for (const [key, value] of Object.entries(field)) form.append(key, value);
-  }
   return form;
 }
 
 export function getInfo(): Promise<ServiceInfo> {
   return request<ServiceInfo>("/api/v1/info", { method: "GET" }, 10_000);
-}
-
-export function pixelate(image: Blob, pixelSize: number): Promise<PixelateResponse> {
-  return request<PixelateResponse>("/api/v1/pixelate", {
-    method: "POST",
-    body: imageForm(image, { pixel_size: String(pixelSize) }),
-  });
 }
 
 export function removeBackground(image: Blob): Promise<MatteResponse> {

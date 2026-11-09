@@ -1,5 +1,3 @@
-import type { PixelateMeta } from "./geometry";
-
 function blobFromCanvas(
   canvas: HTMLCanvasElement,
   type: string,
@@ -119,24 +117,15 @@ export async function loadSourceImage(
 }
 
 /** Composite the source over white, optionally through a matte, for the model. */
-export async function composeForeground(
-  source: SourceImage,
-  mask: MaskData | null,
-): Promise<Blob> {
-  if (!mask) return source.upload;
-  const context = canvas2d(source.width, source.height);
-  const image = context.createImageData(source.width, source.height);
-  const rgba = source.rgba;
-  const data = image.data;
-  for (let i = 0; i < source.width * source.height; i += 1) {
-    const alpha = mask.data[i] / 255;
-    data[i * 4] = Math.round(rgba[i * 4] * alpha + 255 * (1 - alpha));
-    data[i * 4 + 1] = Math.round(rgba[i * 4 + 1] * alpha + 255 * (1 - alpha));
-    data[i * 4 + 2] = Math.round(rgba[i * 4 + 2] * alpha + 255 * (1 - alpha));
-    data[i * 4 + 3] = 255;
+/** Source pixels with the cutout mask as alpha, ready for Pixilate. */
+export function foregroundRgba(source: SourceImage, mask: MaskData | null): Uint8ClampedArray {
+  const output = new Uint8ClampedArray(source.rgba);
+  if (mask) {
+    for (let i = 0; i < mask.data.length; i += 1) {
+      output[i * 4 + 3] = Math.min(output[i * 4 + 3], mask.data[i]);
+    }
   }
-  context.putImageData(image, 0, 0);
-  return encodeSmallest(context.canvas);
+  return output;
 }
 
 function blobFromDataUri(dataUri: string): Blob {
@@ -148,29 +137,6 @@ function blobFromDataUri(dataUri: string): Blob {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return new Blob([bytes], { type: mime });
-}
-
-export interface GridImage {
-  width: number;
-  height: number;
-  rgba: Uint8ClampedArray;
-}
-
-export async function rgbaFromDataUri(dataUri: string): Promise<GridImage> {
-  const blob = blobFromDataUri(dataUri);
-  const bitmap = await decodeBitmap(blob);
-  try {
-    const context = canvas2d(bitmap.width, bitmap.height);
-    context.drawImage(bitmap, 0, 0);
-    const image = context.getImageData(0, 0, bitmap.width, bitmap.height);
-    return {
-      width: bitmap.width,
-      height: bitmap.height,
-      rgba: new Uint8ClampedArray(image.data),
-    };
-  } finally {
-    bitmap.close();
-  }
 }
 
 export async function maskFromDataUri(
@@ -192,89 +158,6 @@ export async function maskFromDataUri(
   } finally {
     bitmap.close();
   }
-}
-
-/**
- * Align a full-resolution mask to the model's bead grid.
- * The three nearest-neighbour steps mirror the original Python pipeline.
- */
-export function alignMaskToGrid(mask: MaskData | null, meta: PixelateMeta): Uint8Array {
-  const gridSize = meta.grid_width * meta.grid_height;
-  if (!mask) return new Uint8Array(gridSize).fill(255);
-
-  const nearest = (
-    data: Uint8Array,
-    srcWidth: number,
-    srcHeight: number,
-    dstWidth: number,
-    dstHeight: number,
-  ): Uint8Array => {
-    if (srcWidth === dstWidth && srcHeight === dstHeight) return data;
-    const output = new Uint8Array(dstWidth * dstHeight);
-    for (let y = 0; y < dstHeight; y += 1) {
-      const sourceY = Math.min(
-        srcHeight - 1,
-        Math.floor(((y + 0.5) * srcHeight) / dstHeight),
-      );
-      const sourceRow = sourceY * srcWidth;
-      const targetRow = y * dstWidth;
-      for (let x = 0; x < dstWidth; x += 1) {
-        const sourceX = Math.min(
-          srcWidth - 1,
-          Math.floor(((x + 0.5) * srcWidth) / dstWidth),
-        );
-        output[targetRow + x] = data[sourceRow + sourceX];
-      }
-    }
-    return output;
-  };
-
-  // PIL thumbnail -> resize -> crop (with padding) -> resize, all NEAREST.
-  const thumb = nearest(
-    mask.data,
-    mask.width,
-    mask.height,
-    meta.thumb_width,
-    meta.thumb_height,
-  );
-  const resized = nearest(
-    thumb,
-    meta.thumb_width,
-    meta.thumb_height,
-    meta.resized_width,
-    meta.resized_height,
-  );
-  const alpha = new Uint8Array(gridSize);
-  for (let y = 0; y < meta.grid_height; y += 1) {
-    const cropY =
-      meta.crop_top +
-      Math.floor(((y + 0.5) * meta.crop_height) / meta.grid_height);
-    for (let x = 0; x < meta.grid_width; x += 1) {
-      const cropX =
-        meta.crop_left +
-        Math.floor(((x + 0.5) * meta.crop_width) / meta.grid_width);
-      if (
-        cropX < 0 ||
-        cropY < 0 ||
-        cropX >= meta.resized_width ||
-        cropY >= meta.resized_height
-      ) {
-        alpha[y * meta.grid_width + x] = 0;
-        continue;
-      }
-      alpha[y * meta.grid_width + x] = resized[cropY * meta.resized_width + cropX];
-    }
-  }
-  return alpha;
-}
-
-export function applyGridAlpha(
-  rgba: Uint8ClampedArray,
-  alpha: Uint8Array,
-): Uint8ClampedArray {
-  const output = new Uint8ClampedArray(rgba);
-  for (let i = 0; i < alpha.length; i += 1) output[i * 4 + 3] = alpha[i];
-  return output;
 }
 
 export function cutoutDataUrl(
@@ -324,8 +207,4 @@ export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
       "image/png",
     );
   });
-}
-
-export function dataUriFromCanvas(canvas: HTMLCanvasElement): string {
-  return canvas.toDataURL("image/png");
 }

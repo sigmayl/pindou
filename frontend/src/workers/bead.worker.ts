@@ -1,33 +1,25 @@
-import { optimizeBeads, type OptimizeOptions } from "../lib/optimize";
+import { pixelateImage, type PixelateOptions } from "../lib/pixelate";
 
-interface OptimizeRequest {
+interface PixelateRequest {
   rgba: ArrayBuffer;
   width: number;
   height: number;
-  paletteId: string;
-  options: OptimizeOptions;
+  options: PixelateOptions;
 }
 
-interface OptimizeResponse {
+interface PixelateResponse {
   rgba: ArrayBuffer;
   colorsUsed: number;
 }
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 
-worker.onmessage = (event: MessageEvent<OptimizeRequest>) => {
+worker.onmessage = (event: MessageEvent<PixelateRequest>) => {
   try {
-    const { rgba, width, height, paletteId, options } = event.data;
-    const result = optimizeBeads(
-      new Uint8ClampedArray(rgba),
-      width,
-      height,
-      paletteId,
-      options,
-    );
-    const buffer = result.rgba.buffer as ArrayBuffer;
-    const response: OptimizeResponse = {
-      rgba: buffer,
+    const { rgba, width, height, options } = event.data;
+    const result = pixelateImage(new Uint8ClampedArray(rgba), width, height, options);
+    const response: PixelateResponse = {
+      rgba: result.rgba.buffer as ArrayBuffer,
       colorsUsed: result.colorsUsed,
     };
     worker.postMessage(response, [response.rgba]);

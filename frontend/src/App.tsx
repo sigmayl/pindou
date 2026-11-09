@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { ApiError, getInfo, pixelate, removeBackground, type ServiceInfo } from "./api/client";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, getInfo, removeBackground, type ServiceInfo } from "./api/client";
 import { CutoutIcon, CpuIcon, GridIcon, LogoMark, PaletteIcon, SparkIcon } from "./components/Icons";
 import { LevelPicker } from "./components/LevelPicker";
 import { ResultPanel } from "./components/ResultPanel";
@@ -8,46 +8,35 @@ import { UploadCard } from "./components/UploadCard";
 import {
   computeLevels,
   defaultLevel,
+  gridSizeFor,
   type LevelOption,
 } from "./lib/geometry";
 import {
-  alignMaskToGrid,
-  applyGridAlpha,
   canvasToBlob,
-  composeForeground,
   cutoutDataUrl,
+  foregroundRgba,
   loadSourceImage,
   maskFromDataUri,
-  rgbaFromDataUri,
   upscaleRgba,
   type MaskData,
   type SourceImage,
 } from "./lib/image";
 import { getPalette } from "./lib/palette";
 import { renderPattern } from "./lib/pattern";
-import { optimizeInWorker } from "./lib/workerClient";
+import { UNLIMITED_COLORS } from "./lib/pixelate";
+import { pixelateInWorker } from "./lib/workerClient";
 import type { GeneratedResult, Phase, ResultTab } from "./types";
 
 const BUSY_LABELS: Record<Exclude<Phase, "idle">, string> = {
   loading: "正在读取图片…",
   rmbg: "正在抠图，CPU 推理中…",
-  pixelate: "正在生成像素画…",
-  optimizing: "正在本地匹配颜色…",
+  pixelate: "正在本地生成像素画…",
 };
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return "发生了未知错误，请重试。";
-}
-
-function visibleColorCount(rgba: Uint8ClampedArray): number {
-  const colors = new Set<number>();
-  for (let i = 0; i < rgba.length; i += 4) {
-    if (rgba[i + 3] < 128) continue;
-    colors.add((rgba[i] << 16) | (rgba[i + 1] << 8) | rgba[i + 2]);
-  }
-  return colors.size;
 }
 
 function visibleBeadCount(rgba: Uint8ClampedArray): number {
@@ -83,10 +72,6 @@ export default function App() {
   const [paletteId, setPaletteId] = useState("mard-221-alfonse-doudou");
   const [small, setSmall] = useState(false);
   const [maxColors, setMaxColors] = useState(24);
-  const [smoothing, setSmoothing] = useState(35);
-  const [cleanup, setCleanup] = useState(2);
-  const [protectEdges, setProtectEdges] = useState(true);
-  const [dither, setDither] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [result, setResult] = useState<GeneratedResult | null>(null);
   const [tab, setTab] = useState<ResultTab>("pixel");
@@ -95,14 +80,12 @@ export default function App() {
   const [serviceState, setServiceState] = useState<"checking" | "online" | "offline">(
     "checking",
   );
+  const previewRef = useRef<HTMLElement>(null);
 
   const busy = phase !== "idle";
   const levels: LevelOption[] = useMemo(() => {
-    if (!source) return [];
-    const all = computeLevels(source.width, source.height);
-    if (!serviceInfo) return all;
-    return all.filter((item) => serviceInfo.pixel_sizes.includes(item.pixelSize));
-  }, [source, serviceInfo]);
+    return source ? computeLevels(source.width, source.height) : [];
+  }, [source]);
   const palette = paletteId ? getPalette(paletteId) : null;
 
   useEffect(() => {
@@ -144,16 +127,13 @@ export default function App() {
 
   useEffect(() => {
     setResult(null);
-  }, [
-    level,
-    paletteId,
-    small,
-    maxColors,
-    smoothing,
-    cleanup,
-    protectEdges,
-    dither,
-  ]);
+  }, [level, paletteId, small, maxColors]);
+
+  // On phones the controls stack above the result, so bring the new preview into view.
+  useEffect(() => {
+    if (!result || !window.matchMedia("(max-width: 900px)").matches) return;
+    previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [result]);
 
   async function handleFile(file: File) {
     if (busy) return;
@@ -174,10 +154,7 @@ export default function App() {
       setCutoutUrl(null);
       setResult(null);
       setTab("pixel");
-      const available = computeLevels(loaded.width, loaded.height).filter(
-        (item) => !serviceInfo || serviceInfo.pixel_sizes.includes(item.pixelSize),
-      );
-      setLevel(defaultLevel(available));
+      setLevel(defaultLevel(computeLevels(loaded.width, loaded.height)));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -227,52 +204,30 @@ export default function App() {
     setResult(null);
     setPhase("pixelate");
     try {
-      const foreground = await composeForeground(source, mask);
-      const response = await pixelate(foreground, level);
-      const meta = response.meta;
-      const grid = await rgbaFromDataUri(response.image);
-      if (grid.width !== meta.grid_width || grid.height !== meta.grid_height) {
-        throw new Error("服务端返回的网格尺寸不一致，请重试。");
-      }
-
-      const alpha = alignMaskToGrid(mask, meta);
-      let rgba = applyGridAlpha(grid.rgba, alpha);
-      let colorsUsed = visibleColorCount(rgba);
+      const started = performance.now();
+      const { gridWidth, gridHeight } = gridSizeFor(source.width, source.height, level);
+      const { rgba, colorsUsed } = await pixelateInWorker(
+        foregroundRgba(source, mask),
+        source.width,
+        source.height,
+        {
+          gridWidth,
+          gridHeight,
+          paletteId,
+          maxColors: maxColors >= UNLIMITED_COLORS ? null : maxColors,
+        },
+      );
+      const elapsedMs = performance.now() - started;
       const beadCount = visibleBeadCount(rgba);
 
-      if (paletteId) {
-        setPhase("optimizing");
-        const optimized = await optimizeInWorker(
-          rgba,
-          meta.grid_width,
-          meta.grid_height,
-          paletteId,
-          {
-            maxColors,
-            smoothing,
-            cleanup,
-            protectEdges,
-            dither,
-            alphaThreshold: 128,
-          },
-        );
-        rgba = optimized.rgba;
-        colorsUsed = optimized.colorsUsed;
-      }
-
       const scale = small ? 1 : level;
-      const previewCanvas = upscaleRgba(rgba, meta.grid_width, meta.grid_height, scale);
+      const previewCanvas = upscaleRgba(rgba, gridWidth, gridHeight, scale);
       const pixelBlob = await canvasToBlob(previewCanvas);
 
       let patternBlob: Blob | null = null;
       let patternStats: { beadCount: number; colorCount: number } | null = null;
       if (paletteId) {
-        const pattern = renderPattern(
-          rgba,
-          meta.grid_width,
-          meta.grid_height,
-          paletteId,
-        );
+        const pattern = renderPattern(rgba, gridWidth, gridHeight, paletteId);
         patternBlob = await canvasToBlob(pattern.canvas);
         patternStats = pattern.stats;
       }
@@ -280,17 +235,18 @@ export default function App() {
       const previewUrl = URL.createObjectURL(pixelBlob);
       const patternUrl = patternBlob ? URL.createObjectURL(patternBlob) : null;
       setResult({
-        gridWidth: meta.grid_width,
-        gridHeight: meta.grid_height,
+        gridWidth,
+        gridHeight,
         level,
         paletteTitle: palette?.title ?? null,
         previewUrl,
         patternUrl,
         beadCount: patternStats?.beadCount ?? beadCount,
         colorCount: patternStats?.colorCount ?? colorsUsed,
-        elapsedMs: response.elapsed_ms,
+        elapsedMs,
         pixelBlob,
         patternBlob,
+        beadGrid: { width: gridWidth, height: gridHeight, rgba },
       });
       setTab(paletteId ? "pattern" : "pixel");
     } catch (caught) {
@@ -312,15 +268,15 @@ export default function App() {
         </a>
         <div className="topbar-meta">
           <span className="pill">
-            <CpuIcon width={15} height={15} /> CPU 推理
+            <CpuIcon width={15} height={15} /> 本地像素化
           </span>
           <span className="pill">无需登录</span>
           <span className={`status-dot status-${serviceState}`} title={
             serviceState === "online"
-              ? "推理服务已连接"
+              ? "抠图服务已连接"
               : serviceState === "offline"
-                ? "推理服务未连接"
-                : "正在检查推理服务"
+                ? "抠图服务未连接，像素化不受影响"
+                : "正在检查抠图服务"
           }>
             <span />
             {serviceState === "online"
@@ -342,7 +298,7 @@ export default function App() {
               <em>变成一颗颗拼豆。</em>
             </h1>
             <p>
-              自动抠图与像素化由自有 CPU 服务推理；颜色匹配、限色优化和图纸排版全部在浏览器本地完成。
+              像素化和拼豆色号标准化由 Pixilate 在浏览器本地完成，只有可选的自动抠图才会把图片发送到自有 CPU 服务。
               不需要账号，图片不会被用于训练。
             </p>
             <div className="hero-points">
@@ -434,18 +390,10 @@ export default function App() {
               <SettingsPanel
                 paletteId={paletteId}
                 maxColors={maxColors}
-                smoothing={smoothing}
-                cleanup={cleanup}
-                protectEdges={protectEdges}
-                dither={dither}
                 small={small}
                 disabled={busy}
                 onPalette={setPaletteId}
                 onMaxColors={setMaxColors}
-                onSmoothing={setSmoothing}
-                onCleanup={setCleanup}
-                onProtectEdges={setProtectEdges}
-                onDither={setDither}
                 onSmall={setSmall}
               />
             </div>
@@ -462,12 +410,12 @@ export default function App() {
               {phase === "idle" ? "生成拼豆图纸" : BUSY_LABELS[phase]}
             </button>
             <p className="privacy-note">
-              图片仅用于本次推理，服务端不会保存上传文件或生成结果。
+              只有使用自动抠图时图片才会上传，服务端不会保存上传文件或生成结果。
             </p>
             </div>
           </aside>
 
-          <section className="preview-column">
+          <section className="preview-column" ref={previewRef}>
             {result ? (
               <ResultPanel
                 result={result}
@@ -515,24 +463,24 @@ export default function App() {
           <article>
             <span className="feature-icon"><CutoutIcon /></span>
             <h3>本地优先的流程</h3>
-            <p>抠图与像素化只发送必要的图片到后端；蒙版对齐、色表匹配和图纸绘制都在浏览器内完成。</p>
+            <p>像素化、色号标准化和图纸绘制都在浏览器内完成，只有自动抠图才会把图片发送到后端。</p>
           </article>
           <article>
             <span className="feature-icon"><CpuIcon /></span>
             <h3>CPU 友好</h3>
-            <p>后端只加载推理所需子网络，CPU 线程和并发可配置，适合普通云主机部署。</p>
+            <p>后端只负责可选的 RMBG 抠图，CPU 线程和并发可配置，适合普通云主机部署。</p>
           </article>
           <article>
             <span className="feature-icon"><PaletteIcon /></span>
             <h3>真实拼豆色号</h3>
-            <p>内置 MARD、COCO、Artkal 等 11 套色表，按 CIE Lab 色差匹配并统计每色用量。</p>
+            <p>内置 MARD、COCO、Artkal 等 11 套色表，在 Pixilate 的调色板阶段按 OKLab 色差直接归到真实色号，并统计每色用量。</p>
           </article>
         </section>
       </main>
 
       <footer className="footer">
         <p>
-          模型：Pixelization（ashleykleynhans） · RMBG-2.0（briaai） · 色表数据：
+          像素化：Pixilate（Shilo，MIT） · 抠图模型：RMBG-2.0（briaai） · 色表数据：
           HansBug/pindou-color-data（MIT）。使用前请自行确认模型与色表的许可。
         </p>
         <p>拼豆工坊 · 像素画与图纸生成工具</p>

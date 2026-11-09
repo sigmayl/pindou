@@ -15,16 +15,22 @@ async def healthz() -> HealthResponse:
 
 @router.get("/readyz", response_model=HealthResponse)
 async def readyz(request: Request, response: Response) -> HealthResponse:
+    """Ready unless RMBG is enabled, preloaded at startup, and failed to load.
+
+    Without preloading the model is fetched lazily on the first matting request,
+    so the service is ready as soon as it accepts connections.
+    """
     state = request.app.state
-    ready = state.pixel_service.loaded
-    if not ready:
+    settings = state.settings
+    rmbg = state.rmbg_service
+    failed = settings.rmbg_enabled and settings.rmbg_preload and not rmbg.loaded
+    if failed:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return HealthResponse(
-        status="ready" if ready else "starting",
+        status="unavailable" if failed else "ready",
         details={
-            "pixel_model_loaded": state.pixel_service.loaded,
-            "pixel_model_error": state.pixel_service.load_error,
-            "rmbg_enabled": state.settings.rmbg_enabled,
-            "rmbg_loaded": state.rmbg_service.loaded,
+            "rmbg_enabled": settings.rmbg_enabled,
+            "rmbg_loaded": rmbg.loaded,
+            "rmbg_error": rmbg.load_error,
         },
     )

@@ -3,13 +3,12 @@ ROOT := $(CURDIR)
 PYTHON := $(ROOT)/.venv/bin/python
 PIP := $(ROOT)/.venv/bin/pip
 
-.PHONY: help setup setup-rmbg weights palettes dev-backend dev-frontend test test-backend test-frontend build docker-up docker-down docker-logs clean
+.PHONY: help setup setup-rmbg palettes dev-backend dev-frontend test test-backend test-frontend build docker-up docker-down docker-logs clean
 
 help:
 	@echo "Targets:"
 	@echo "  setup          Create .venv, install backend + frontend dependencies"
 	@echo "  setup-rmbg     Install optional RMBG-2.0 dependencies into .venv"
-	@echo "  weights        Download Pixelization weights (~178 MB)"
 	@echo "  palettes       Regenerate the frontend palette bundle"
 	@echo "  dev-backend    Run FastAPI on http://127.0.0.1:8000"
 	@echo "  dev-frontend   Run Vite on http://localhost:5173"
@@ -26,9 +25,6 @@ setup:
 
 setup-rmbg:
 	$(PIP) install -r backend/requirements-rmbg.txt
-
-weights:
-	bash scripts/download-weights.sh
 
 palettes:
 	node scripts/build-palettes.mjs
