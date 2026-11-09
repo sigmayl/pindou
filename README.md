@@ -59,6 +59,14 @@ docker compose up -d --build
 
 打开 <http://localhost:8080>。API 文档在容器内部的 `/docs`，默认不对外暴露。
 
+也可以直接使用 GHCR 已发布的双架构镜像，不本地构建：
+
+```bash
+cp .env.example .env
+docker compose pull
+docker compose up -d
+```
+
 首次构建会安装 CPU 版 PyTorch 与 RMBG 依赖，镜像较大；模型权重通过 bind mount 挂载，不写进镜像。
 
 ### 多架构镜像与 CI

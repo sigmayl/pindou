@@ -1,5 +1,6 @@
 services:
   backend:
+    image: ghcr.io/sigmayl/pindou-backend:${IMAGE_TAG:-latest}
     build:
       context: ./backend
       args:
@@ -30,6 +31,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    image: ghcr.io/sigmayl/pindou-frontend:${IMAGE_TAG:-latest}
     build:
       context: ./frontend
       args:
