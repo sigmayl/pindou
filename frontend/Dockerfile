@@ -1,4 +1,6 @@
-FROM node:22-alpine AS build
+# The bundle is platform-independent, so build it once on the native build
+# platform. Running tsc/vite under QEMU for arm64 hits illegal instructions.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
