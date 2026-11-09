@@ -1,0 +1,34 @@
+# Local environments
+.venv/
+.venv-rmbg/
+.venv-*/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Model weights (download with scripts/download-weights.sh)
+legacy/weights/
+backend/weights/*.pth
+!backend/weights/.gitkeep
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# Deployment
+.env
+.env.local
+.env.*.local
+.DS_Store
+
+# Runtime artefacts
+outputs/
+legacy/outputs/
+legacy/Klee_in_Genshin_Impact.jpg
+tmp/

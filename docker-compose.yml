@@ -1,0 +1,45 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      args:
+        INSTALL_RMBG: ${INSTALL_RMBG:-true}
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MODEL_WEIGHTS_DIR: /app/weights
+      PIXEL_THREADS: ${PIXEL_THREADS:-4}
+      INFERENCE_CONCURRENCY: ${INFERENCE_CONCURRENCY:-1}
+      INFERENCE_WAIT_TIMEOUT: ${INFERENCE_WAIT_TIMEOUT:-120}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20971520}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-30000000}
+      RMBG_ENABLED: ${RMBG_ENABLED:-true}
+      RMBG_PRELOAD: ${RMBG_PRELOAD:-false}
+      RMBG_MODEL_ID: ${RMBG_MODEL_ID:-briaai/RMBG-2.0}
+      RMBG_LOCAL_FILES_ONLY: ${RMBG_LOCAL_FILES_ONLY:-false}
+      HF_TOKEN: ${HF_TOKEN:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      TRUST_PROXY_HEADERS: "true"
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-10}
+    volumes:
+      - ./backend/weights:/app/weights:ro
+      - huggingface-cache:/home/appuser/.cache/huggingface
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  huggingface-cache:

@@ -1,0 +1,11 @@
+.venv/
+.venv-rmbg/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+tests/
+weights/*.pth
+!weights/.gitkeep
