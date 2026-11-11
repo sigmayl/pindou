@@ -28,6 +28,23 @@ function visibleColors(rgba: Uint8ClampedArray): Set<number> {
 }
 
 describe("pixelateImage", () => {
+  it("generates the 104-cell board with standardized, capped colours", () => {
+    const paletteId = "mard-221-alfonse-doudou";
+    const { rgba, colorsUsed } = pixelateImage(sampleImage(), SIZE, SIZE, {
+      gridWidth: 104,
+      gridHeight: 104,
+      paletteId,
+      maxColors: 12,
+    });
+    expect(rgba.length).toBe(104 * 104 * 4);
+    const colors = visibleColors(rgba);
+    expect(colors.size).toBeLessThanOrEqual(12);
+    expect(colorsUsed).toBe(colors.size);
+    for (const color of colors) expect(paletteIndex(paletteId).codeByPacked.has(color)).toBe(true);
+    expect(rgba[3]).toBe(0);
+    expect(rgba[(104 - 1) * 4 + 3]).toBe(255);
+  });
+
   it("outputs the exact grid with only bead colours", () => {
     const { codeByPacked } = paletteIndex("mard-221-alfonse-doudou");
     const { rgba } = pixelateImage(sampleImage(), SIZE, SIZE, {

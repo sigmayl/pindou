@@ -676,6 +676,13 @@ main {
   border-color: var(--line-strong);
 }
 
+.level-card.is-board {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 10px;
+}
+
 .level-card.is-active {
   border-color: var(--accent);
   background: var(--accent-soft);

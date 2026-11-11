@@ -1,5 +1,6 @@
 import { lazy, Suspense, useRef, useState } from "react";
 import { DEFAULT_FINISH, type FinishId } from "../lib/surfaceFinish";
+import { BOARD_LEVEL, levelLabel } from "../lib/geometry";
 import type { GeneratedResult, ResultTab } from "../types";
 import type { BeadViewerHandle } from "./BeadViewer";
 import { DownloadIcon, GridIcon } from "./Icons";
@@ -42,17 +43,20 @@ export function ResultPanel({ result, tab, onTab, onRegenerate }: Props) {
 
   async function handleDownload() {
     setDownloadError(null);
+    const size = result.level === BOARD_LEVEL
+      ? `${result.gridWidth}x${result.gridHeight}`
+      : `${result.level}px`;
     if (activeTab === "bead3d") {
       try {
         const blob = await viewerRef.current?.capture();
-        if (blob) download(blob, `pindou-3d-${result.level}px.png`);
+        if (blob) download(blob, `pindou-3d-${size}.png`);
       } catch (caught) {
         setDownloadError(caught instanceof Error ? caught.message : "导出失败，请重试。");
       }
     } else if (activeTab === "pattern" && result.patternBlob) {
-      download(result.patternBlob, `pindou-pattern-${result.level}px.png`);
+      download(result.patternBlob, `pindou-pattern-${size}.png`);
     } else {
-      download(result.pixelBlob, `pindou-pixel-${result.level}px.png`);
+      download(result.pixelBlob, `pindou-pixel-${size}.png`);
     }
   }
 
@@ -63,7 +67,7 @@ export function ResultPanel({ result, tab, onTab, onRegenerate }: Props) {
           <span className="eyebrow">生成结果</span>
           <h2>
             {result.gridWidth} × {result.gridHeight} 格{" "}
-            <span className="result-sub">· {result.level}px 等级</span>
+            <span className="result-sub">· {levelLabel(result.level)}</span>
           </h2>
         </div>
         <div className="result-actions">

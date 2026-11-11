@@ -25,7 +25,7 @@ import { indexImage, q4 } from './orphans.ts'
 export { PixilateError, canonicalHash } from './canonical.ts'
 
 // Bump `version` when behaviour changes and `constants` whenever a pixel-changing constant does.
-export const ENGINE = { id: 'pixilate-prototype-js', version: '0.14.2', constants: 33 }
+export const ENGINE = { id: 'pixilate-prototype-js', version: '0.14.2-pindou.1', constants: 34 } // pindou: streaming resampling and coverage-based raster alpha
 export const CLEAN_PROFILE = 'ai-sprite-crisp/1' // the named cleanup bundle `cleanup: true` selects
 export const MAX_TARGET = 1024
 const ALPHA_POLICY = 'Binary(128)' // pixel alpha >= 128 counts as opaque; a cell is opaque by majority coverage

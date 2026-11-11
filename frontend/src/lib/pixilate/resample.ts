@@ -17,32 +17,43 @@ function boxTaps(src: number, dst: number) {
   return { start, len, off, w: Float64Array.from(wts) }
 }
 
-/** Area resample of a premultiplied linear RGBA source (W x H, 4 floats/px) to sw x sh -> OKLab + coverage. */
-function areaResample(src: Float32Array, W: number, H: number, sw: number, sh: number) {
+/**
+ * pindou: stream linear-light, premultiplied area samples straight from RGBA8. Only the last
+ * horizontally filtered row is cached (adjacent output rows can share a fractional source row),
+ * avoiding both a full float source and a sw x H intermediate. Filter row storage is O(sw).
+ */
+function areaResample(img: Image, sw: number, sh: number) {
+  const { width: W, height: H, data: src } = img
   const tx = boxTaps(W, sw), ty = boxTaps(H, sh)
-  const row = new Float64Array(sw * H * 4)
-  for (let y = 0; y < H; y++) {
+  const row = new Float64Array(sw * 4), accum = new Float64Array(sw * 4)
+  let cachedY = -1
+  const horizontal = (y: number) => {
+    if (cachedY === y) return
     for (let X = 0; X < sw; X++) {
       let r = 0, g = 0, b = 0, a = 0
       for (let t = 0; t < tx.len[X]; t++) {
-        const p = (y * W + tx.start[X] + t) * 4, wt = tx.w[tx.off[X] + t]
-        r += src[p] * wt; g += src[p + 1] * wt; b += src[p + 2] * wt; a += src[p + 3] * wt
+        const p = (y * W + tx.start[X] + t) * 4
+        const wt = tx.w[tx.off[X] + t] * (src[p + 3] / 255)
+        r += SRGB_TO_LINEAR[src[p]] * wt; g += SRGB_TO_LINEAR[src[p + 1]] * wt
+        b += SRGB_TO_LINEAR[src[p + 2]] * wt; a += wt
       }
-      const o = (y * sw + X) * 4
+      const o = X * 4
       row[o] = r; row[o + 1] = g; row[o + 2] = b; row[o + 3] = a
     }
+    cachedY = y
   }
   const lab = new Float64Array(sw * sh * 3), A = new Float64Array(sw * sh)
   for (let Y = 0; Y < sh; Y++) {
+    accum.fill(0)
+    for (let t = 0; t < ty.len[Y]; t++) {
+      horizontal(ty.start[Y] + t)
+      const wt = ty.w[ty.off[Y] + t]
+      for (let o = 0; o < row.length; o++) accum[o] += row[o] * wt
+    }
     for (let X = 0; X < sw; X++) {
-      let r = 0, g = 0, b = 0, a = 0
-      for (let t = 0; t < ty.len[Y]; t++) {
-        const o = ((ty.start[Y] + t) * sw + X) * 4, wt = ty.w[ty.off[Y] + t]
-        r += row[o] * wt; g += row[o + 1] * wt; b += row[o + 2] * wt; a += row[o + 3] * wt
-      }
-      const q = Y * sw + X
+      const q = Y * sw + X, o = X * 4, a = accum[o + 3]
       A[q] = a
-      if (a > 0) linearToOklab(r / a, g / a, b / a, lab, q * 3)
+      if (a > 0) linearToOklab(accum[o] / a, accum[o + 1] / a, accum[o + 2] / a, lab, q * 3)
     }
   }
   return { lab, A }
@@ -142,15 +153,17 @@ function select(flat: Float64Array, A: Float64Array, targetW: number, targetH: n
   for (let ty = 0; ty < targetH; ty++) {
     for (let tx = 0; tx < targetW; tx++) {
       const c = ty * targetW + tx, lab = ridge[c] ? raw : flat
-      let m = 0, sum = 0, wsum = 0, wL = 0, wa = 0, wb = 0
+      let m = 0, sum = 0, wsum = 0, wL = 0, wa = 0, wb = 0, coverage = 0
       for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
         const q = (ty * 4 + j) * sw + tx * 4 + i
+        coverage += A[q]
         if (A[q] < 0.5) continue
-        const wt = CW[i] * CW[j]
+        const wt = CW[i] * CW[j] * A[q] // pindou: partial edge samples have less colour influence
         ids[m] = q; Ls[m] = lab[q * 3]; sum += Ls[m]; m++
         wsum += wt; wL += wt * lab[q * 3]; wa += wt * lab[q * 3 + 1]; wb += wt * lab[q * 3 + 2]
       }
-      if (m < 8) { dominance[c] = 1; continue }
+      // pindou: decide the silhouette from actual cell coverage, not a count of thresholded samples.
+      if (!m || coverage < 8 - 1e-9) { dominance[c] = 1; continue }
       alpha[c] = 255
       for (let k = 0; k < m; k++) { // stable insertion sort of Ls[0..m) (m <= 16) into sorted
         const v = Ls[k]
@@ -185,20 +198,9 @@ function select(flat: Float64Array, A: Float64Array, targetW: number, targetH: n
   return { w: targetW, h: targetH, lab: out, alpha, dominance }
 }
 
-/** Premultiplied linear source (4 floats/px). */
-function linearPremul(img: Image) {
-  const W = img.width, H = img.height, d = img.data, src = new Float32Array(W * H * 4)
-  for (let p = 0; p < W * H; p++) {
-    const al = d[p * 4 + 3] / 255
-    src[p * 4] = SRGB_TO_LINEAR[d[p * 4]] * al; src[p * 4 + 1] = SRGB_TO_LINEAR[d[p * 4 + 1]] * al
-    src[p * 4 + 2] = SRGB_TO_LINEAR[d[p * 4 + 2]] * al; src[p * 4 + 3] = al
-  }
-  return src
-}
-
 /** areaCells(img, sw, sh) -> Cells: plain linear-light area cells (opaque at coverage >= 0.5), e.g. for a background mask. */
 export function areaCells(img: Image, sw: number, sh: number) {
-  const { lab, A } = areaResample(linearPremul(img), img.width, img.height, sw, sh)
+  const { lab, A } = areaResample(img, sw, sh)
   return { w: sw, h: sh, lab: Float32Array.from(lab), alpha: Uint8Array.from(A, (a) => (a >= 0.5 ? 255 : 0)), dominance: new Float32Array(sw * sh).fill(1) }
 }
 
@@ -207,7 +209,7 @@ export function areaCells(img: Image, sw: number, sh: number) {
  * SAT Kuwahara (r = 2), then the Step 5b selection (with thin-feature ridges).
  */
 export function resampleToTarget(img: Image, targetW: number, targetH: number) {
-  const { lab, A } = areaResample(linearPremul(img), img.width, img.height, targetW * 4, targetH * 4)
+  const { lab, A } = areaResample(img, targetW * 4, targetH * 4)
   return select(kuwahara(lab, A, targetW * 4, targetH * 4, 2), A, targetW, targetH, lab)
 }
 

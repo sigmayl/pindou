@@ -8,7 +8,7 @@ import { UploadCard } from "./components/UploadCard";
 import {
   computeLevels,
   defaultLevel,
-  gridSizeFor,
+  levelLabel,
   type LevelOption,
 } from "./lib/geometry";
 import {
@@ -120,7 +120,7 @@ export default function App() {
   }, [result]);
 
   useEffect(() => {
-    if (levels.length > 0 && !levels.some((item) => item.pixelSize === level)) {
+    if (levels.length > 0 && !levels.some((item) => item.id === level && item.available)) {
       setLevel(defaultLevel(levels));
     }
   }, [levels, level]);
@@ -200,12 +200,14 @@ export default function App() {
 
   async function handleGenerate() {
     if (!source || busy) return;
+    const selectedLevel = levels.find((item) => item.id === level && item.available);
+    if (!selectedLevel) return;
     setError(null);
     setResult(null);
     setPhase("pixelate");
     try {
       const started = performance.now();
-      const { gridWidth, gridHeight } = gridSizeFor(source.width, source.height, level);
+      const { gridWidth, gridHeight } = selectedLevel;
       const { rgba, colorsUsed } = await pixelateInWorker(
         foregroundRgba(source, mask),
         source.width,
@@ -220,7 +222,7 @@ export default function App() {
       const elapsedMs = performance.now() - started;
       const beadCount = visibleBeadCount(rgba);
 
-      const scale = small ? 1 : level;
+      const scale = small ? 1 : selectedLevel.previewScale;
       const previewCanvas = upscaleRgba(rgba, gridWidth, gridHeight, scale);
       const pixelBlob = await canvasToBlob(previewCanvas);
 
@@ -375,7 +377,7 @@ export default function App() {
               <div className="panel">
                 <div className="panel-title-row">
                   <h2>像素等级</h2>
-                  <span className="muted">数字越大，格子越粗</span>
+                  <span className="muted">104 格适配底板，px 越大格子越粗</span>
                 </div>
                 <LevelPicker
                   levels={levels}
@@ -430,7 +432,7 @@ export default function App() {
                     <span className="eyebrow">预览</span>
                     <h2>{busy ? BUSY_LABELS[phase as Exclude<Phase, "idle">] : "等待生成"}</h2>
                   </div>
-                  <span className="stage-tag">{level}px 等级</span>
+                  <span className="stage-tag">{levelLabel(level)}</span>
                 </div>
                 <div className={`stage-images ${mask ? "has-cutout" : ""}`}>
                   <figure>
